@@ -1,0 +1,247 @@
+version: "3.8"
+
+# create these volume manually to persist data 'docker volume create dynamodb-data'
+volumes:
+  dynamodb-data:
+    external: true
+
+networks:
+  grafana:
+
+services:
+  proxy:
+    image: traefik
+    container_name: traefik
+    command:
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    ports:
+      - 80:80
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    networks:
+      grafana:
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.ImageName}}|{{.Name}}|traefik"
+        max-size: "1M"
+        max-file: "10"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    volumes:
+      - ./data/grafana/lib:/var/lib/grafana
+      - ./data/grafana/datasources:/etc/grafana/datasources
+      - ./data/grafana/dashboards:/etc/grafana/dashboards
+      - ./data/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+    environment:
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_USERS_VIEWERS_CAN_EDIT=true
+      - GF_SERVER_ROOT_URL=http://grafana.localhost
+      - GF_SMTP_ENABLED=false
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.grafana.loadbalancer.server.port=3000
+      - traefik.http.routers.grafana.rule=Host(`grafana.localhost`)
+    ports:
+      - 3000:3000
+    user: 1000:1000
+    networks:
+      grafana:
+        aliases:
+          - grafana
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.ImageName}}|{{.Name}}|grafana"
+        max-size: "1M"
+        max-file: "10"
+
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    restart: unless-stopped
+    depends_on:
+      - s3
+      - dynamodb
+    volumes:
+      - ./data/loki/etc:/etc/loki/:ro
+      - ./data/loki/data:/loki
+    ports:
+      - 3100:3100
+    command: -config.file=/etc/loki/config.yaml
+    user: 1000:1000
+    networks:
+      grafana:
+        aliases:
+          - loki
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.ImageName}}|{{.Name}}|loki"
+        max-size: "1M"
+        max-file: "10"
+
+  mimir:
+    image: grafana/mimir:latest
+    command: ["-config.file=/etc/mimir.yaml"]
+    container_name: mimir
+    #restart: unless-stopped
+    depends_on:
+      - "s3"
+    volumes:
+      - ./data/mimir/etc/config.yaml:/etc/mimir.yaml
+      - ./data/mimir/data:/data
+    ports:
+      - 8080:8080
+      - 9109:9109
+    networks:
+      grafana:
+        aliases:
+          - mimir
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.ImageName}}|{{.Name}}|mimir"
+        max-size: "1M"
+        max-file: "10"
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --log.level=error
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    volumes:
+      - ./data/prometheus/etc/config.yaml:/etc/prometheus/prometheus.yml
+      - ./data/prometheus/data:/prometheus
+    user: 1000:1000
+    depends_on:
+      - "mimir"
+    networks:
+      grafana:
+        aliases:
+          - prometheus
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.ImageName}}|{{.Name}}|prometheus"
+        max-size: "1M"
+        max-file: "10"
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    restart: unless-stopped
+    volumes:
+      - ./data/promtail/etc:/etc/promtail/:ro
+      - /var/lib/docker/containers/:/var/opt/docker/containers:ro
+      - /var/log/:/var/opt/log/:ro
+    command: -config.file=/etc/promtail/config.yaml
+    networks:
+      grafana:
+        aliases:
+          - promtail
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.ImageName}}|{{.Name}}|promtail"
+        max-size: "1M"
+        max-file: "10"
+
+  s3:
+    image: minio/minio:latest
+    entrypoint: [""]
+    container_name: s3
+    command: ["sh", "-c", "minio server --address ':9000' --console-address ':9001' --quiet /data"]
+    restart: unless-stopped
+    environment:
+      - MINIO_ROOT_USER=user
+      - MINIO_ROOT_PASSWORD=password123
+    volumes:
+      - ./data/s3:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.s3.loadbalancer.server.port=9001
+      - traefik.http.routers.s3.rule=Host(`s3.localhost`)
+    networks:
+      grafana:
+        aliases:
+          - s3
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.ImageName}}|{{.Name}}|s3"
+        max-size: "1M"
+        max-file: "10"
+
+  #creates3:
+  #  image: minio/mc
+  #  networks:
+  #    - grafana
+  #  depends_on:
+  #    - s3
+  #  entrypoint: >
+  #    /bin/sh -c "
+  #    /usr/bin/mc config host add s3 http://s3:9000 user password123;
+  #    /usr/bin/mc mb s3/loki;
+  #    /usr/bin/mc mb s3/mimir-blocks;
+  #    /usr/bin/mc mb s3/mimir-ruler;
+  #    /usr/bin/mc policy set public s3/loki;
+  #    /usr/bin/mc policy set public s3/mimir-blocks;
+  #    /usr/bin/mc policy set public s3/loki;
+  #    exit 0;
+  #    "
+
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    container_name: dynamodb
+    command: ['-jar', 'DynamoDBLocal.jar', '-sharedDb', '-dbPath', './data']
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/dynamodb:/home/dynamodblocal/data
+    working_dir: /home/dynamodblocal
+    networks:
+      grafana:
+        aliases:
+          - dynamodb
+    logging:
+      driver: "json-file"
+      options:
+        tag: "{{.ImageName}}|{{.Name}}|dynamodb"
+        max-size: "1M"
+        max-file: "10"
+
+  dynamodb-admin:
+    image: aaronshaf/dynamodb-admin
+    container_name: dynamodb_admin
+    ports:
+      - "8001:8001"
+    environment:
+      - DYNAMO_ENDPOINT="http://dynamodb:8000"
+      - AWS_ACCESS_KEY_ID="local"
+      - AWS_SECRET_ACCESS_KEY="local"
+    depends_on:
+      - dynamodb
+    networks:
+      grafana:
+        aliases:
+          - dynamodb-admin
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.dynamodb-admin.loadbalancer.server.port=8001
+      - traefik.http.routers.dynamodb-admin.rule=Host(`dynamodb.localhost`)

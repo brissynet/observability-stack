@@ -1,0 +1,14 @@
+*
+!*/
+!/data/dynamodb/.gitkeep
+!/data/grafana/datasources.yaml
+!/data/loki/data/.gitkeep
+!/data/loki/etc/config.yaml
+!/data/mimir/data/.gitkeep
+!/data/mimir/etc/config.yaml
+!/data/prometheus/data/.gitkeep
+!/data/prometheus/etc/config.yaml
+!/data/promtail/etc/config.yaml
+!/data/s3/.gitkeep
+!.gitignore
+!docker-compose.yml

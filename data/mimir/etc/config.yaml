@@ -1,0 +1,57 @@
+server:
+  http_listen_port: 9109
+
+  grpc_listen_port: 9195
+  grpc_server_max_recv_msg_size: 104857600
+  grpc_server_max_send_msg_size: 104857600
+  grpc_server_max_concurrent_streams: 1000
+
+  log_level: info
+
+activity_tracker:
+  filepath: /data/metrics-activity.log
+
+alertmanager: {}
+
+alertmanager_storage:
+  backend: local
+
+ingester:
+  ring:
+    final_sleep: 0s
+    kvstore:
+      store: inmemory
+    min_ready_duration: 0s
+    num_tokens: 512
+    replication_factor: 1
+
+distributor:
+  pool:
+    health_check_ingesters: true
+
+compactor:
+  sharding_ring:
+    kvstore:
+      store: inmemory
+
+blocks_storage:
+  backend: s3
+  s3:
+    endpoint: s3:9000
+    insecure: true
+    access_key_id: user
+    secret_access_key: password123
+    bucket_name: mimir-blocks
+
+ruler:
+  rule_path: /data/rules
+  enable_api: true
+
+ruler_storage:
+  backend: s3
+  s3:
+    endpoint: s3:9000
+    insecure: true
+    access_key_id: user
+    secret_access_key: password123
+    bucket_name: mimir-ruler
