@@ -92,7 +92,7 @@ services:
     image: grafana/mimir:latest
     command: ["-config.file=/etc/mimir.yaml"]
     container_name: mimir
-    #restart: unless-stopped
+    restart: unless-stopped
     depends_on:
       - "s3"
     volumes:
